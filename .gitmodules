@@ -1,0 +1,3 @@
+[submodule "third_party/hotspotctl"]
+	path = third_party/hotspotctl
+	url = https://github.com/AjayyXD/hotspotctl
