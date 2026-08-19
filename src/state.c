@@ -14,6 +14,7 @@ int state_write(const GlideState *st) {
     fprintf(f, "SMBD_PID=%d\n", st->smbd_pid);
     fprintf(f, "DASHBOARD_PID=%d\n", st->dashboard_pid);
     fprintf(f, "GLIDEFSD_PID=%d\n", st->glidefsd_pid);
+    fprintf(f, "TRANSPORT=%d\n", (int)(st->transport));
     fclose(f);
     chmod(GLIDEFS_STATE_FILE, 0644);
     return 0;
@@ -35,6 +36,7 @@ static void parse_kv(char *line, GlideState *st) {
     else if (strcmp(key, "SMBD_PID") == 0) st->smbd_pid = atoi(val);
     else if (strcmp(key, "DASHBOARD_PID") == 0) st->dashboard_pid = atoi(val);
     else if (strcmp(key, "GLIDEFSD_PID") == 0) st->glidefsd_pid = atoi(val);
+    else if (strcmp(key, "TRANSPORT") == 0) st->transport = (gfs_transport_t)atoi(val);
 }
 
 int state_read(GlideState *st) {

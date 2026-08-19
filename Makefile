@@ -2,6 +2,7 @@ CC ?= gcc
 CFLAGS ?= -Wall -Wextra -O2
 INCLUDES = -Iinclude
 LDFLAGS = -lpthread
+LDLIBS = -lpthread
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
@@ -10,7 +11,7 @@ BUILD_DIR = build
 BIN_DIR = bin
 
 TARGET = $(BIN_DIR)/glidefsctl
-SRCS = src/main.c src/cli.c src/util.c src/state.c src/hotspot.c src/share.c src/dashboard.c src/client.c src/deps.c
+SRCS = src/main.c src/cli.c src/util.c src/state.c src/hotspot.c src/share.c src/dashboard.c src/client.c src/deps.c src/network.c
 OBJS = $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRCS))
 
 HOTSPOTCTL_DIR = third_party/hotspotctl
@@ -21,7 +22,7 @@ HOTSPOTCTL_BIN = $(HOTSPOTCTL_DIR)/hotspotctl
 all: $(TARGET) hotspotctl
 
 $(TARGET): $(OBJS) | $(BIN_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $(OBJS)
+	$(CC) $(CFLAGS) $(INCLUDES) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
 $(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
