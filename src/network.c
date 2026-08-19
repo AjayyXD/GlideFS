@@ -1,0 +1,325 @@
+/*
+ * network.c - Tailscale WAN fallback transport for GlideFS.
+ *
+ * Follows the same conventions as hotspot.c/share.c: privileged actions
+ * shell out via util.c's run_cmd() (argv arrays, never system()/sprintf'd
+ * shell strings), errors go through log_err()/log_warn()/log_info(), and
+ * state transitions are meant to be persisted through state.c by the
+ * caller (cli.c), not by this file directly.
+ *
+ * ASSUMED util.c signatures - adjust to match the real ones:
+ *   int  run_cmd(char *const argv[]);
+ *   int  run_cmd_capture(char *const argv[], char *out, size_t outlen);
+ *   int  run_cmd_quiet(char *const argv[]);   // stdout/stderr -> /dev/null
+ *   void log_info(const char *fmt, ...);
+ *   void log_warn(const char *fmt, ...);
+ *   void log_err(const char *fmt, ...);
+ */
+
+#include "network.h"
+#include "common.h"
+
+#include <errno.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#define log_err(fmt, ...)  fprintf(stderr, "ERROR: " fmt "\n", ##__VA_ARGS__)
+#define log_warn(fmt, ...) fprintf(stderr, "WARN: " fmt "\n",  ##__VA_ARGS__)
+#define log_info(fmt, ...) printf("INFO: " fmt "\n",           ##__VA_ARGS__)
+#define GFS_MARKER_BEGIN "# --- GlideFS: managed interfaces block, do not edit by hand ---"
+#define GFS_MARKER_END   "# --- GlideFS: end managed interfaces block ---"
+
+/* =======================================================================
+ * Tailscale lifecycle
+ * ======================================================================= */
+
+int gfs_tailscale_up(const char *authkey, const char *hostname) {
+    if (!authkey || !*authkey) {
+        log_err("tailscale: no auth key provided");
+        return -1;
+    }
+
+    /* 1. Start daemon */
+    if (run_cmd("systemctl start tailscaled") != 0) {
+        log_err("tailscale: failed to start tailscaled.service");
+        return -1;
+    }
+
+    /* Wait for daemon */
+    for (int i = 0; i < 20; i++) {
+        if (run_cmd_silent("tailscale status") == 0 || i == 19)
+            break;
+        usleep(250 * 1000);
+    }
+
+    /* 2. Authenticate using format strings */
+    int rc;
+    if (hostname && *hostname) {
+        rc = run_cmd("tailscale up --authkey=%s --accept-routes --hostname=%s", authkey, hostname);
+    } else {
+        rc = run_cmd("tailscale up --authkey=%s --accept-routes", authkey);
+    }
+
+    if (rc != 0) {
+        log_err("tailscale: 'tailscale up' failed - check auth key");
+        return -1;
+    }
+
+    log_info("tailscale: node authenticated and mesh interface is up");
+    return 0;
+}
+
+#include <stdio.h>
+#include <string.h>
+
+int gfs_tailscale_down(void) {
+    // Fixed: Passed as a single string instead of a char** array
+    if (run_cmd("tailscale down") != 0) {
+        fprintf(stderr, "tailscale: 'tailscale down' returned non-zero\n");
+        return -1;
+    }
+    return 0;
+}
+
+/* Minimal extraction of the Tailscale IPv4 address using `tailscale ip -4`.
+ * Bypasses the need for run_cmd_capture and fragile JSON parsing. */
+int gfs_tailscale_self_ip(char out_ip[TS_IP_MAXLEN]) {
+    // Open a pipe to read the output of the command directly
+    FILE *fp = popen("tailscale ip -4", "r");
+    if (!fp) {
+        fprintf(stderr, "tailscale: failed to run 'tailscale ip -4'\n");
+        return -1;
+    }
+    
+    // Read the first line of output
+    if (fgets(out_ip, TS_IP_MAXLEN, fp) != NULL) {
+        // Strip the trailing newline character
+        out_ip[strcspn(out_ip, "\n")] = '\0';
+    } else {
+        fprintf(stderr, "tailscale: no IP returned from 'tailscale ip -4'\n");
+        pclose(fp);
+        return -1;
+    }
+    
+    pclose(fp);
+
+    // Keep your helpful warning check
+    if (strncmp(out_ip, "100.", 4) != 0) {
+        fprintf(stderr, "tailscale warning: resolved '%s' which doesn't look like a "
+                        "CGNAT 100.x mesh address.\n", out_ip);
+    }
+
+    return 0;
+}
+
+/* =======================================================================
+ * Samba interface binding
+ * ======================================================================= */
+
+static int rewrite_smb_conf_interfaces(const char *path, const char *iface_value) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        log_err("smb.conf: cannot open %s: %s", path, strerror(errno));
+        return -1;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    if (sz < 0) { fclose(f); log_err("smb.conf: ftell failed on %s", path); return -1; }
+    fseek(f, 0, SEEK_SET);
+
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); log_err("smb.conf: out of memory"); return -1; }
+
+    size_t rd = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    buf[rd] = '\0';
+
+    char *global = strstr(buf, "[global]");
+    if (!global) {
+        free(buf);
+        log_err("smb.conf: no [global] section in %s - was this file "
+                 "generated by share.c?", path);
+        return -1;
+    }
+
+    char tmp_path[600];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.gfstmp", path);
+    FILE *out = fopen(tmp_path, "w");
+    if (!out) {
+        free(buf);
+        log_err("smb.conf: cannot open temp file %s: %s", tmp_path, strerror(errno));
+        return -1;
+    }
+
+    /* Write everything through the end of the "[global]" line. */
+    char *line_end = strchr(global, '\n');
+    size_t head_len = line_end ? (size_t)(line_end - buf + 1)
+                                : (size_t)(global - buf) + strlen(global);
+    fwrite(buf, 1, head_len, out);
+
+    fprintf(out, "%s\n", GFS_MARKER_BEGIN);
+    fprintf(out, "   interfaces = %s\n", iface_value);
+    fprintf(out, "   bind interfaces only = yes\n");
+    fprintf(out, "%s\n", GFS_MARKER_END);
+
+    /* Copy the remainder, but drop any managed block GlideFS wrote on a
+     * previous run so repeated failover/failback cycles don't pile up
+     * duplicate "interfaces =" lines (smbd takes the last one, but it's
+     * still a mess to debug). */
+    char *rest = line_end ? line_end + 1 : buf + strlen(buf);
+    char *prev_begin = strstr(rest, GFS_MARKER_BEGIN);
+    char *prev_end   = strstr(rest, GFS_MARKER_END);
+    if (prev_begin && prev_end && prev_end > prev_begin) {
+        fwrite(rest, 1, (size_t)(prev_begin - rest), out);
+        char *after = strchr(prev_end, '\n');
+        rest = after ? after + 1 : prev_end + strlen(prev_end);
+    }
+    fputs(rest, out);
+
+    fclose(out);
+    free(buf);
+
+    if (rename(tmp_path, path) != 0) {
+        log_err("smb.conf: rename(%s -> %s) failed: %s",
+                 tmp_path, path, strerror(errno));
+        unlink(tmp_path);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int restart_smbd(void) {
+    if (run_cmd("systemctl restart smbd") != 0) {
+        log_err("samba: smbd restart failed - run "
+                "'systemctl status smbd' / 'testparm' to see why");
+        return -1;
+    }
+    return 0;
+}
+
+int gfs_samba_bind_tailscale(const char *smb_conf_path) {
+    if (rewrite_smb_conf_interfaces(smb_conf_path, "tailscale0") != 0)
+        return -1;
+    if (restart_smbd() != 0)
+        return -1;
+    log_info("samba: smbd now bound exclusively to tailscale0");
+    return 0;
+}
+
+int gfs_samba_bind_lan(const char *smb_conf_path, const char *lan_iface) {
+    if (rewrite_smb_conf_interfaces(smb_conf_path, lan_iface) != 0)
+        return -1;
+    if (restart_smbd() != 0)
+        return -1;
+    log_info("samba: smbd now bound exclusively to %s", lan_iface);
+    return 0;
+}
+
+/* =======================================================================
+ * Mid-session failover monitor
+ * ======================================================================= */
+
+struct monitor_args {
+    char lan_ip[64];
+    int  interval_sec;
+    int  fail_threshold;
+    gfs_link_cb on_failover;
+    gfs_link_cb on_recover;
+    void *ctx;
+};
+
+static pthread_t   g_monitor_thread;
+static atomic_bool  g_monitor_running = false;
+
+static int ping_once(const char *ip) {
+    return run_cmd_silent("ping -c 1 -W 1 %s", ip);
+}
+
+static void *monitor_thread_fn(void *arg) {
+    struct monitor_args *a = (struct monitor_args *)arg;
+    int consec_fail = 0;
+    bool on_wan = false;
+
+    while (atomic_load(&g_monitor_running)) {
+        int rc = ping_once(a->lan_ip);
+
+        if (rc != 0) {
+            consec_fail++;
+            log_warn("link-monitor: LAN ping to %s failed (%d/%d)",
+                      a->lan_ip, consec_fail, a->fail_threshold);
+
+            if (!on_wan && consec_fail >= a->fail_threshold) {
+                log_info("link-monitor: LAN subnet lost - triggering "
+                          "Tailscale failover");
+                if (a->on_failover) a->on_failover(a->ctx);
+                on_wan = true;
+            }
+        } else {
+            if (on_wan) {
+                log_info("link-monitor: LAN subnet %s reachable again - "
+                          "failing back", a->lan_ip);
+                if (a->on_recover) a->on_recover(a->ctx);
+                on_wan = false;
+            }
+            consec_fail = 0;
+        }
+
+        /* Sleep in 1s increments so gfs_link_monitor_stop() takes
+         * effect promptly instead of waiting out a long interval. */
+        for (int slept = 0; slept < a->interval_sec &&
+                             atomic_load(&g_monitor_running); slept++) {
+            sleep(1);
+        }
+    }
+
+    free(a);
+    return NULL;
+}
+
+int gfs_link_monitor_start(const char *lan_ip, int interval_sec,
+                            int fail_threshold,
+                            gfs_link_cb on_failover,
+                            gfs_link_cb on_recover,
+                            void *ctx) {
+    if (atomic_load(&g_monitor_running)) {
+        log_err("link-monitor: already running");
+        return -1;
+    }
+    if (!lan_ip || !*lan_ip) {
+        log_err("link-monitor: no LAN IP given to watch");
+        return -1;
+    }
+
+    struct monitor_args *a = malloc(sizeof(*a));
+    if (!a) { log_err("link-monitor: out of memory"); return -1; }
+
+    snprintf(a->lan_ip, sizeof(a->lan_ip), "%s", lan_ip);
+    a->interval_sec   = interval_sec   > 0 ? interval_sec   : 3;
+    a->fail_threshold = fail_threshold > 0 ? fail_threshold : 3;
+    a->on_failover = on_failover;
+    a->on_recover  = on_recover;
+    a->ctx = ctx;
+
+    atomic_store(&g_monitor_running, true);
+    if (pthread_create(&g_monitor_thread, NULL, monitor_thread_fn, a) != 0) {
+        atomic_store(&g_monitor_running, false);
+        free(a);
+        log_err("link-monitor: pthread_create failed: %s", strerror(errno));
+        return -1;
+    }
+    pthread_detach(g_monitor_thread);
+
+    log_info("link-monitor: watching %s every %ds (fail after %d misses)",
+              a->lan_ip, a->interval_sec, a->fail_threshold);
+    return 0;
+}
+
+void gfs_link_monitor_stop(void) {
+    atomic_store(&g_monitor_running, false);
+}
