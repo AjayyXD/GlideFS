@@ -1,10 +1,6 @@
 # GlideFS (local-hotspot edition)
 
-GlideFS turns a shared folder into something that "just works" on a small
-Linux LAN: one machine broadcasts a WiFi hotspot, shares a folder over
-Samba, and shows a live dashboard of who's connected and what's locked.
-Other machines join the hotspot and get the folder mounted like a normal
-local directory.
+GlideFS turns a shared folder into something that "just works" across Linux machines. It broadcasts a local Wi-Fi hotspot for nearby devices and utilizes a background Tailscale mesh network for remote collaborators, complete with a live dashboard showing connected devices and file locks.
 
 This build implements the **local-hotspot-only** slice of the original
 GlideFS SRS: no Tailscale/mesh/WAN failover yet (see "What's not in this
@@ -72,7 +68,7 @@ works too, since both binaries land in `bin/` together.
 ### Host a folder
 
 ```bash
-sudo glidefsctl share ~/Projects/design-assets -n design -s DesignTeam -p supersecret
+sudo glidefsctl share ~/Projects/design-assets -n design -s DesignTeam -p supersecret -k tskey-auth-YOUR_KEY
 ```
 
 - `-n <name>` (required) — the Samba share name
@@ -98,8 +94,14 @@ cleanly, the same way `hotspotctl stop` would.
 
 ### Connect from another machine
 
+**Local Wi-Fi Connection:**
 ```bash
 sudo glidefsctl connect design -s DesignTeam -p supersecret
+```
+
+**Global Mesh / WAN Connection:**
+```bash
+sudo glidefsctl connect design -p supersecret -t 100.x.y.z -k tskey-auth-YOUR_KEY
 ```
 
 This joins the WiFi network via `nmcli`, waits for the host to answer,
@@ -164,9 +166,9 @@ glidefs/
 │   ├── share.c                generates smb.conf, starts/stops smbd
 │   ├── dashboard.c            embedded HTTP server + JSON status API
 │   ├── client.c                nmcli join + CIFS mount/umount
-│   ├── state.c                 /run/glidefs/glidefs.state read/write
-│   └── util.c                   logging, run_cmd, mkdir -p, root 
-|   |__network.c
+│   ├── network.c                Tailscale lifecycle, failover monitor, Samba rebind
+│   ├── state.c                  /run/glidefs/glidefs.state read/write
+│   └── util.c                   logging, run_cmd, mkdir -p, root
 check
 ├── assets/dashboard.html      dashboard source (embedded into the binary at build time)
 └── third_party/hotspotctl/    vendored hotspotctl dependency
