@@ -309,10 +309,11 @@ int cmd_connect(int argc, char *argv[]) {
     require_root(argv[0]);
 
     if (argc < 3) {
-        log_err("Usage: %s connect <name> -p <password> [-s <ssid>] [-m <mountpoint>] [-t <tailscale_ip>]", argv[0]);
+        log_err("Usage: %s connect <name> -p <password> [-s <ssid>] [-m <mountpoint>] [-t <tailscale_ip>] [-k <authkey>]", argv[0]);
         return 1;
     }
     char *ts_ip = NULL;
+    char *authkey = NULL;
     const char *name = argv[2];
     char ssid[64] = "";
     char password[64] = "";
@@ -320,12 +321,14 @@ int cmd_connect(int argc, char *argv[]) {
 
     optind = 3;
     int opt;
-    while ((opt = getopt(argc, argv, "s:p:m:t:")) != -1) {
+    /* Added 'k:' to the string below */
+    while ((opt = getopt(argc, argv, "s:p:m:t:k:")) != -1) {
         switch (opt) {
             case 's': snprintf(ssid, sizeof(ssid), "%s", optarg); break;
             case 'p': snprintf(password, sizeof(password), "%s", optarg); break;
             case 'm': snprintf(mountpoint, sizeof(mountpoint), "%s", optarg); break;
             case 't': ts_ip = optarg; break;
+            case 'k': authkey = optarg; break; /* Added this case */
             default:
                 log_err("Unknown option. See --help.");
                 return 1;
@@ -344,6 +347,15 @@ int cmd_connect(int argc, char *argv[]) {
      * Otherwise, join the hotspot via client_connect().
      */
     if (ts_ip && *ts_ip) {
+        /* Authenticate client to the mesh network first */
+        if (authkey) {
+            log_info("Authenticating client to Tailscale...");
+            if (gfs_tailscale_up(authkey, "glidefs-client") != 0) {
+                log_err("Failed to join Tailscale mesh");
+                return 1;
+            }
+        }
+
         char target_dir[512];
         if (strlen(mountpoint) > 0) {
             snprintf(target_dir, sizeof(target_dir), "%s", mountpoint);
@@ -355,7 +367,7 @@ int cmd_connect(int argc, char *argv[]) {
         ensure_dir(target_dir);
 
         log_info("Mounting share '%s' over Tailscale (%s)...", name, ts_ip);
-        int rc = run_cmd("mount -t cifs //%s/%s %s -o username=nobody,password=%s,uid=1000,gid=1000",
+        int rc = run_cmd("mount -t cifs //%s/%s %s -o username=nobody,password=%s,uid=1000,gid=1000,soft,echo_interval=10",
                          ts_ip, name, target_dir, password);
         if (rc != 0) {
             log_err("Failed to mount CIFS share over Tailscale");
@@ -389,7 +401,26 @@ int cmd_disconnect(int argc, char *argv[]) {
         }
     }
 
-    return client_disconnect(name, mountpoint);
+    /* Calculate default path if -m is not provided */
+    if (strlen(mountpoint) == 0) {
+        char home[256];
+        client_home_dir(home, sizeof(home));
+        snprintf(mountpoint, sizeof(mountpoint), "%s/GlideFS/%s", home, name);
+    }
+
+    log_info("Disconnecting and cleaning up '%s'...", mountpoint);
+    
+    /* Forcefully detach the mount even if the host is already down */
+    run_cmd_silent("umount -l %s 2>/dev/null", mountpoint);
+    
+    /* Remove the empty directory */
+    run_cmd_silent("rmdir %s 2>/dev/null", mountpoint);
+    
+    /* Also clear the traditional local Wi-Fi state if it exists */
+    client_disconnect(name, mountpoint);
+
+    log_ok("Disconnected '%s'", name);
+    return 0;
 }
 
 int cmd_deps(int argc, char *argv[]) {
