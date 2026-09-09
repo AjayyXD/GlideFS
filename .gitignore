@@ -1,0 +1,15 @@
+# Build directories (executables and intermediate files)
+/bin/
+/build/
+
+# C compilation artifacts
+*.o
+*.out
+*.so
+*.a
+
+# Editor and IDE configurations
+.vscode/
+
+# OS generated files
+.DS_Store
