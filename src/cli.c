@@ -92,7 +92,9 @@ int cmd_init(int argc, char *argv[]) {
     log_info("or 'glidefsctl connect <name> -p <password>' to join one.");
     return 0;
 }
-
+static void failover_wrapper(void *ctx) {
+    gfs_samba_bind_tailscale((const char *)ctx);
+}
 int cmd_share(int argc, char *argv[]) {
     require_root(argv[0]);
 
@@ -196,7 +198,7 @@ int cmd_share(int argc, char *argv[]) {
             log_ok("Tailscale active (mesh IP: %s)", ts_ip);
         }
         gfs_link_monitor_start(GLIDEFS_HOST_IP, 3, 3, 
-                               (gfs_link_cb)gfs_samba_bind_tailscale, 
+                               failover_wrapper, 
                                NULL, (void *)GLIDEFS_SMB_CONF);
     }
 
