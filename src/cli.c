@@ -6,7 +6,6 @@
 #include "dashboard.h"
 #include "client.h"
 #include "deps.h"
-#include "network.h"
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -21,25 +20,25 @@ void print_version(void) {
 }
 
 void print_help(const char *argv0) {
-    printf("\nGlideFS - zero-configuration shared folder tool\n\n");
+    printf("\nGlideFS - zero-configuration shared folder over a local hotspot\n\n");
     printf("Usage: sudo %s <command> [options]\n\n", argv0);
     printf("Host commands:\n");
     printf("  init                          Set up local GlideFS state\n");
     printf("  share <path> -n <name>        Share <path> under <name>, start hotspot + dashboard\n");
-    printf("        [-s <ssid>] [-p <password>] [-k <authkey>] [-d]\n");
+    printf("        [-s <ssid>] [-p <password>] [-d]\n");
     printf("  unshare                       Stop the active share, hotspot and dashboard\n");
     printf("  status                        Show current share status\n\n");
     printf("Client commands:\n");
     printf("  connect <name> -p <password>  Join the hotspot and mount the share\n");
-    printf("        [-s <ssid>] [-m <mountpoint>] [-t <tailscale_ip>]\n");
+    printf("        [-s <ssid>] [-m <mountpoint>]\n");
     printf("  disconnect <name> [-m <mountpoint>]   Unmount a previously connected share\n\n");
     printf("Other:\n");
     printf("  deps [--install] [--host|--client]   Check/install runtime dependencies\n");
     printf("  --help                        Show this help\n");
     printf("  --version                     Show version\n\n");
     printf("Examples:\n");
-    printf("  sudo %s share ~/Projects -n team -s TeamNet -p sharedsecret -k tskey-auth-...\n", argv0);
-    printf("  sudo %s connect team -p sharedsecret -t 100.64.x.y\n", argv0);
+    printf("  sudo %s share ~/Projects -n team -s TeamNet -p sharedsecret\n", argv0);
+    printf("  sudo %s connect team -s TeamNet -p sharedsecret\n", argv0);
     printf("  sudo %s unshare\n\n", argv0);
 }
 
@@ -92,17 +91,15 @@ int cmd_init(int argc, char *argv[]) {
     log_info("or 'glidefsctl connect <name> -p <password>' to join one.");
     return 0;
 }
-static void failover_wrapper(void *ctx) {
-    gfs_samba_bind_tailscale((const char *)ctx);
-}
+
 int cmd_share(int argc, char *argv[]) {
     require_root(argv[0]);
 
     if (argc < 3) {
-        log_err("Usage: %s share <path> -n <name> [-s <ssid>] [-p <password>] [-k <authkey>] [-d]", argv[0]);
+        log_err("Usage: %s share <path> -n <name> [-s <ssid>] [-p <password>] [-d]", argv[0]);
         return 1;
     }
-    char *authkey = NULL;
+
     const char *path_arg = argv[2];
     char name[128] = "";
     char ssid[64] = "";
@@ -112,12 +109,11 @@ int cmd_share(int argc, char *argv[]) {
     /* parse options starting after the positional <path> */
     optind = 3;
     int opt;
-    while ((opt = getopt(argc, argv, "n:s:p:k:d")) != -1) {
+    while ((opt = getopt(argc, argv, "n:s:p:d")) != -1) {
         switch (opt) {
             case 'n': snprintf(name, sizeof(name), "%s", optarg); break;
             case 's': snprintf(ssid, sizeof(ssid), "%s", optarg); break;
             case 'p': snprintf(password, sizeof(password), "%s", optarg); break;
-            case 'k': authkey = optarg; break;
             case 'd': debug_mode = 1; break;
             default:
                 log_err("Unknown option. See --help.");
@@ -187,21 +183,6 @@ int cmd_share(int argc, char *argv[]) {
         return 1;
     }
 
-    char ts_ip[64] = "";
-    if (authkey) {
-        if (gfs_tailscale_up(authkey, "glidefs-host") != 0) {
-            log_err("Failed to start Tailscale");
-            hotspot_stop();
-            return 1;
-        }
-        if (gfs_tailscale_self_ip(ts_ip) == 0) {
-            log_ok("Tailscale active (mesh IP: %s)", ts_ip);
-        }
-        gfs_link_monitor_start(GLIDEFS_HOST_IP, 3, 3, 
-                               failover_wrapper, 
-                               NULL, (void *)GLIDEFS_SMB_CONF);
-    }
-
     int smbd_pid = share_start_smbd();
     if (smbd_pid <= 0) {
         log_err("Failed to start smbd. Check %s/logs/smbd.log", GLIDEFS_RUN_DIR);
@@ -240,19 +221,8 @@ int cmd_share(int argc, char *argv[]) {
     }
     printf("    Share      : %s  ->  %s\n", name, real_path);
     printf("    Dashboard  : http://%s:%d\n", GLIDEFS_HOST_IP, GLIDEFS_DASH_PORT);
-    if (strlen(ts_ip) > 0) {
-        printf("    Mesh IP    : %s\n", ts_ip);
-    }
-
-    printf("\nOn a local device, run:\n");
-    printf("    sudo glidefsctl connect %s -s %s -p %s\n", name, ssid, password);
-
-    if (strlen(ts_ip) > 0) {
-        printf("\nOn a remote WAN device, run:\n");
-        printf("    sudo glidefsctl connect %s -p %s -t %s\n\n", name, password, ts_ip);
-    } else {
-        printf("\n");
-    }
+    printf("\nOn another device, run:\n");
+    printf("    sudo glidefsctl connect %s -s %s -p %s\n\n", name, ssid, password);
 
     return 0;
 }
@@ -276,8 +246,7 @@ int cmd_unshare(int argc, char *argv[]) {
         log_info("Stopped dashboard");
     }
     hotspot_stop();
-    gfs_link_monitor_stop();
-    gfs_tailscale_down();
+
     state_clear();
     run_cmd_silent("rm -f %s", GLIDEFS_SMB_CONF);
     log_ok("GlideFS share fully torn down.");
@@ -309,10 +278,9 @@ int cmd_connect(int argc, char *argv[]) {
     require_root(argv[0]);
 
     if (argc < 3) {
-        log_err("Usage: %s connect <name> -p <password> [-s <ssid>] [-m <mountpoint>] [-t <tailscale_ip>]", argv[0]);
+        log_err("Usage: %s connect <name> -p <password> [-s <ssid>] [-m <mountpoint>]", argv[0]);
         return 1;
     }
-    char *ts_ip = NULL;
     const char *name = argv[2];
     char ssid[64] = "";
     char password[64] = "";
@@ -320,49 +288,22 @@ int cmd_connect(int argc, char *argv[]) {
 
     optind = 3;
     int opt;
-    while ((opt = getopt(argc, argv, "s:p:m:t:")) != -1) {
+    while ((opt = getopt(argc, argv, "s:p:m:")) != -1) {
         switch (opt) {
             case 's': snprintf(ssid, sizeof(ssid), "%s", optarg); break;
             case 'p': snprintf(password, sizeof(password), "%s", optarg); break;
             case 'm': snprintf(mountpoint, sizeof(mountpoint), "%s", optarg); break;
-            case 't': ts_ip = optarg; break;
             default:
                 log_err("Unknown option. See --help.");
                 return 1;
         }
     }
-    if (strlen(ssid) == 0 && !ts_ip) {
+    if (strlen(ssid) == 0) {
         snprintf(ssid, sizeof(ssid), "GlideFS-%s", name);
     }
     if (strlen(password) == 0) {
         log_err("Missing required -p <password>");
         return 1;
-    }
-
-    /*
-     * If ts_ip is given, bypass local Wi-Fi join and mount directly via Tailscale.
-     * Otherwise, join the hotspot via client_connect().
-     */
-    if (ts_ip && *ts_ip) {
-        char target_dir[512];
-        if (strlen(mountpoint) > 0) {
-            snprintf(target_dir, sizeof(target_dir), "%s", mountpoint);
-        } else {
-            char home[256];
-            client_home_dir(home, sizeof(home));
-            snprintf(target_dir, sizeof(target_dir), "%s/GlideFS/%s", home, name);
-        }
-        ensure_dir(target_dir);
-
-        log_info("Mounting share '%s' over Tailscale (%s)...", name, ts_ip);
-        int rc = run_cmd("mount -t cifs //%s/%s %s -o username=nobody,password=%s,uid=1000,gid=1000",
-                         ts_ip, name, target_dir, password);
-        if (rc != 0) {
-            log_err("Failed to mount CIFS share over Tailscale");
-            return 1;
-        }
-        log_ok("Mounted //%s/%s at %s", ts_ip, name, target_dir);
-        return 0;
     }
 
     return client_connect(name, ssid, password, mountpoint);

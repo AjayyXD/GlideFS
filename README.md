@@ -129,17 +129,9 @@ gets the OS's normal "file is locked" behavior instead of a
 `file (conflicted copy).txt`. `smbstatus -L` (surfaced on the dashboard)
 shows exactly which files are locked and by whom.
 
-Global Mesh & WAN Failover (New)
-GlideFS now supports connecting devices across completely different networks (e.g., across the world) using a background Tailscale mesh overlay.
+## What's not in this build
 
-The orchestrator continuously monitors the local LAN. If the Wi-Fi connection drops, it automatically triggers a mid-session failover, rebinding the Samba daemon from wlan0 to the tailscale0 virtual interface. This preserves active file mounts and automatically routes traffic over an encrypted WireGuard tunnel without requiring user intervention.
-
-Additional Requirements (for WAN functionality)
-tailscale (The tailscaled daemon must be active on both host and client machines).
-
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo systemctl enable --now tailscaled
-
+Per your instructions this build is **local-hotspot only**. The original
 SRS also envisioned:
 
 - Dual-transport automatic path selection (LAN vs. Tailscale mesh/WAN)
@@ -165,9 +157,7 @@ glidefs/
 │   ├── dashboard.c            embedded HTTP server + JSON status API
 │   ├── client.c                nmcli join + CIFS mount/umount
 │   ├── state.c                 /run/glidefs/glidefs.state read/write
-│   └── util.c                   logging, run_cmd, mkdir -p, root 
-|   |__network.c
-check
+│   └── util.c                   logging, run_cmd, mkdir -p, root check
 ├── assets/dashboard.html      dashboard source (embedded into the binary at build time)
 └── third_party/hotspotctl/    vendored hotspotctl dependency
 ```

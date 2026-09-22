@@ -1,11 +1,6 @@
 #ifndef GLIDEFS_STATE_H
 #define GLIDEFS_STATE_H
 
-typedef enum{
-    GFS_TRANSPORT_LAN,
-    GFS_TRANSPORT_TAILSCALE,
-} gfs_transport_t;
-
 typedef struct {
     char share_name[128];
     char share_path[4096];
@@ -15,7 +10,6 @@ typedef struct {
     int  smbd_pid;
     int  dashboard_pid;
     int  glidefsd_pid;
-    gfs_transport_t transport;
 } GlideState;
 
 /* write host state to /run/glidefs/glidefs.state */
