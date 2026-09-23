@@ -39,7 +39,7 @@ make && sudo make install
 sudo glidefsctl deps --install                    # grab whatever's missing
 sudo glidefsctl share ~/Projects -n team -s TeamNet -p supersecret
 
-# on a friend's laptop
+# on another laptop
 sudo glidefsctl connect team -s TeamNet -p supersecret
 ```
 
