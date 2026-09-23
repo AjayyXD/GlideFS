@@ -30,7 +30,7 @@ GlideFS turns any folder into something a small group of people can share like a
 
 <br/>
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
 # on the host
@@ -47,34 +47,34 @@ That's it — `~/GlideFS/team` now behaves like a normal local folder on both ma
 
 <br/>
 
-## 💡 Why GlideFS
+## Why GlideFS
 
 Sharing a folder with a couple of people shouldn't require a cloud account, opening ports on your router, or fighting with `rsync` flags. GlideFS exists for the *"just get this folder onto their laptop, now"* moment.
 
-- ✅ **Zero network configuration** — no router login, no port forwarding, no static IPs to hand out
-- ✅ **No accounts, no cloud** — files never leave your devices
-- ✅ **It behaves like a real folder** — `ls`, `cp`, opening files in your editor — all of it just works, because it *is* a normal SMB mount, not a sync client with its own quirks
-- ✅ **You always know what's happening** — a live dashboard shows exactly who's connected and which files are locked, in real time
-- ✅ **Reach beyond the room, when you need to** — add Tailscale and the same share becomes reachable from anywhere, with the local hotspot still working exactly as before
+- **Zero network configuration** — no router login, no port forwarding, no static IPs to hand out
+- **No accounts, no cloud** — files never leave your devices
+- **It behaves like a real folder** — `ls`, `cp`, opening files in your editor — all of it just works, because it *is* a normal SMB mount, not a sync client with its own quirks
+- **You always know what's happening** — a live dashboard shows exactly who's connected and which files are locked, in real time
+- **Reach beyond the room, when you need to** — add Tailscale and the same share becomes reachable from anywhere, with the local hotspot still working exactly as before
 
 <br/>
 
-## ✨ Features
+## Features
 
 | | Feature | Details |
 |---|---|---|
-| 🛰️ | **One-command hosting** | `glidefsctl share <path> -n <name>` stands up the hotspot, the Samba share, and the dashboard in one go |
-| 🔀 | **Dual transport** | Hotspot (LAN) and Tailscale (mesh/WAN) both work *simultaneously* against the same live share — adding the mesh never interrupts anyone already connected |
-| 🎯 | **Automatic path selection** | `connect` with both `-s` and `-t` tries the hotspot first, then falls back to the Tailscale IP automatically if it's out of range |
-| 🔒 | **Native file locking** | Conflict prevention is pure Samba oplocks — a second writer gets the OS's real "file is locked" error, never a `file (conflicted copy).txt` |
-| 📊 | **Live observability dashboard** | A dependency-free embedded web server shows connected devices, live throughput, active sessions/locks, and mesh status — refreshing every 2 seconds |
-| 👤 | **Guest-simple mounts** | Clients don't manage credentials for the share itself — the WiFi password gets you in, everything else is zero-config guest access mapped to your own user |
-| 🩺 | **Dependency doctor** | `glidefsctl deps` detects your distro's package manager and tells you (or auto-installs) exactly what's missing |
-| 🧹 | **Clean teardown** | `unshare`/`disconnect` tear down exactly what GlideFS started, and leave everything else on your system untouched |
+| 1 | **One-command hosting** | `glidefsctl share <path> -n <name>` stands up the hotspot, the Samba share, and the dashboard in one go |
+| 2 | **Dual transport** | Hotspot (LAN) and Tailscale (mesh/WAN) both work *simultaneously* against the same live share — adding the mesh never interrupts anyone already connected |
+| 3 | **Automatic path selection** | `connect` with both `-s` and `-t` tries the hotspot first, then falls back to the Tailscale IP automatically if it's out of range |
+| 4 | **Native file locking** | Conflict prevention is pure Samba oplocks — a second writer gets the OS's real "file is locked" error, never a `file (conflicted copy).txt` |
+| 5 | **Live observability dashboard** | A dependency-free embedded web server shows connected devices, live throughput, active sessions/locks, and mesh status — refreshing every 2 seconds |
+| 6 | **Guest-simple mounts** | Clients don't manage credentials for the share itself — the WiFi password gets you in, everything else is zero-config guest access mapped to your own user |
+| 7 | **Dependency doctor** | `glidefsctl deps` detects your distro's package manager and tells you (or auto-installs) exactly what's missing |
+| 8 | **Clean teardown** | `unshare`/`disconnect` tear down exactly what GlideFS started, and leave everything else on your system untouched |
 
 <br/>
 
-## 📸 Screenshot
+## Screenshot
 
 <div align="center">
 <img src="assets/dashboard-screenshot.png" alt="GlideFS live dashboard showing connected devices, throughput, active locks and mesh status" width="720" />
@@ -84,7 +84,7 @@ Sharing a folder with a couple of people shouldn't require a cloud account, open
 
 <br/>
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 flowchart LR
@@ -110,7 +110,7 @@ flowchart LR
 
 <br/>
 
-## 📦 Requirements
+## Requirements
 
 <details>
 <summary><strong>Host</strong> — click to expand</summary>
@@ -160,7 +160,7 @@ Don't want to look any of this up by hand? Skip straight to `glidefsctl deps` be
 
 <br/>
 
-## 🔧 Build
+## Build
 
 ```bash
 git clone --recurse-submodules <this repo's URL>
@@ -179,7 +179,7 @@ git submodule update --init --recursive
 
 <br/>
 
-## 🩺 Check your dependencies
+## Check your dependencies
 
 ```bash
 glidefsctl deps                    # check both host + client requirements
@@ -192,7 +192,7 @@ sudo glidefsctl deps --install     # auto-install what's missing (best-effort)
 
 <br/>
 
-## 📖 Usage
+## Usage
 
 ### Host a folder — hotspot only
 
@@ -271,7 +271,7 @@ sudo glidefsctl unshare
 
 <br/>
 
-## 🖥️ Dashboard
+## Dashboard
 
 Once a share is active, open `http://192.168.42.1:8090` from any device on the hotspot, or the host's Tailscale IP from anywhere on the mesh. It polls `/api/status` every 2 seconds and shows:
 
@@ -285,26 +285,26 @@ No login, no setup — it's just a status page for the network you're already on
 
 <br/>
 
-## 🔒 How locking works
+## How locking works
 
 Conflict prevention is handled natively by Samba's **oplocks** — there's no GlideFS-specific "who wins" logic to get wrong. When one client has a file open, a second client gets the OS's normal "file is locked" behavior instead of silently creating a `file (conflicted copy).txt`. `smbstatus -L`, surfaced live on the dashboard, shows exactly which files are locked and by whom — and this works identically whether a client is connected over the hotspot or the Tailscale mesh, since it's the same `smbd` process either way.
 
 <br/>
 
-## 🧭 Dual-transport — what it means (and its current limit)
+## Dual-transport — what it means (and its current limit)
 
 GlideFS picks between two independent transports for the **same** live share:
 
 | Transport | Strength | Requirement |
 |---|---|---|
-| 📶 Hotspot (LAN) | Lowest latency, works with no internet at all | WiFi range of the host |
-| 🌐 Tailscale (mesh/WAN) | Works from anywhere | Both machines on the same tailnet |
+| Hotspot (LAN) | Lowest latency, works with no internet at all | WiFi range of the host |
+| Tailscale (mesh/WAN) | Works from anywhere | Both machines on the same tailnet |
 
 `connect` with both `-s` and `-t` implements automatic path selection **at connect time**: it tries the hotspot first and falls back to the mesh IP if the hotspot doesn't answer. What it doesn't do *yet* is continuously monitor an already-mounted share and silently remount it if a client's network changes mid-session — e.g. walking out of WiFi range mid-transfer. That's a reasonable next step, just not implemented here. If the hotspot drops mid-session today, re-run `connect` (with `-t` set) to pick up the mesh path.
 
 <br/>
 
-## 📁 Project layout
+## Project layout
 
 <details>
 <summary>Click to expand</summary>
@@ -333,7 +333,7 @@ glidefs/
 
 <br/>
 
-## 🗂️ Command reference
+## Command reference
 
 <details>
 <summary>Click to expand</summary>
@@ -353,7 +353,7 @@ glidefs/
 
 <br/>
 
-## 🛠️ Troubleshooting
+## Troubleshooting
 
 <details>
 <summary>Click to expand</summary>
@@ -376,6 +376,6 @@ glidefs/
 
 Built with plain C, `smbd`, and a healthy dislike of manual network configuration.
 
-**📜 License** — add your license of choice here (MIT, Apache-2.0, GPL-3.0, etc.) before publishing.
+**License** — add your license of choice here (MIT, Apache-2.0, GPL-3.0, etc.) before publishing.
 
 </div>
